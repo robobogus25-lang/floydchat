@@ -26,3 +26,8 @@ socket.on('message', function(msg) {
     messages.appendChild(item);
     window.scrollTo(0, document.body.scrollHeight);
 });
+const logout = document.getElementById('logout');
+logout.addEventListener('click', (e) => {
+  document.cookie = 'token=; Max-Age=0';
+  location.assign('/login');
+});

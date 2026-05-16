@@ -1,32 +1,65 @@
-
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const db = require('./database');
+const cookie = require('cookie');
+
+const validAuthTokens = [];
 
 const indexHtmlFile = fs.readFileSync(path.join(__dirname, 'static', 'index.html'));
 const scriptFile = fs.readFileSync(path.join(__dirname, 'static', 'script.js'));
 const authFile = fs.readFileSync(path.join(__dirname, 'static', 'auth.js'));
 const styleFile = fs.readFileSync(path.join(__dirname, 'static', 'style.css'));
 const registerFile = fs.readFileSync(path.join(__dirname, 'static', 'register.html'));
+const loginFile = fs.readFileSync(path.join(__dirname, 'static', 'login.html'));
 
 const server = http.createServer((req, res) => {
   if(req.method === 'GET') {
     switch(req.url) {
-      case '/': return res.end(indexHtmlFile);
-      case '/script.js': return res.end(scriptFile);
+      case '/register': return res.end(registerFile);
+      case '/login': return res.end(loginFile);
       case '/auth.js': return res.end(authFile);
       case '/style.css': return res.end(styleFile);
-      case '/register': return res.end(registerFile);
+      default: return guarded(req, res);
     }
   }
   if(req.method === 'POST') {
     switch(req.url) {
       case '/api/register': return registerUser(req, res);
+      case '/api/login': return login(req, res);
+      default: return guarded(req, res);
     }
   }
-  return res.end('Error 404');
 });
+
+function guarded(req, res) {
+  const credentionals = getCredentionals(req);
+  
+  if(!credentionals) {
+    res.writeHead(302, {'Location': '/login'});
+    return res.end(); 
+  }
+  
+  if(req.method === 'GET') {
+    switch(req.url) {
+      case '/': return res.end(indexHtmlFile);
+      case '/script.js': return res.end(scriptFile);
+    }
+  }
+
+  res.writeHead(404);
+  return res.end('Error 404');
+}
+
+
+function getCredentionals(req) {
+  const cookies = cookie.parse(req.headers?.cookie || '');
+  const token = cookies?.token;
+  if(!token || !validAuthTokens.includes(token)) return null;
+  const [user_id, login] = token.split('.');
+  if(!user_id || !login) return null;
+  return {user_id, login};
+}
 
 function registerUser(req, res) {
     let data = '';
@@ -46,9 +79,30 @@ function registerUser(req, res) {
         return res.end('Registeration is successfull');
       }
       catch(e) {
+        res.writeHead(500);
         return res.end('Error: ' + e);
       }
     });
+}
+
+function login(req, res) {
+  let data = '';
+  req.on('data', function(chunk) {
+      data += chunk;
+  });
+  req.on('end', async function() {
+    try {
+      const user = JSON.parse(data);
+      const token = await db.getAuthToken(user);
+      validAuthTokens.push(token);
+      res.writeHead(200);
+      res.end(token);
+    }
+    catch(e) {
+      res.writeHead(500);
+      return res.end('Error: ' + e);
+    }
+  });
 }
 
 server.listen(3000);
@@ -59,13 +113,24 @@ const io = new Server(server);
 io.on('connection', async (socket) => {
   console.log('a user connected. id - ' + socket.id);
 
+
   let userNickname = 'admin';
   let messages = await db.getMessages();
 
   socket.emit('all_messages', messages);
 
   socket.on('new_message', (message) => {
-    db.addMessage(message, 1);
-    io.emit('message', userNickname + ' : ' + message);
+    db.addMessage(message, userId);
+    io.emit('message', userNickname + ': ' + message);
   });
 });
+
+io.use((socket, next) => {
+  const cookie = socket.handshake.auth.cookie;
+  const credentionals = getCredentionals(cookie)
+  if(!credentions){
+    next(new Error("no auth"))
+  }
+  socket.credentionals = credentionals
+  next()
+})
